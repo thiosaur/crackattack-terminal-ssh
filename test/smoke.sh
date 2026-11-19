@@ -69,7 +69,7 @@ echo "== files"
 check "compose.coolify.yml is what tools/coolify-compose.sh makes from compose.yml" \
     sh -c "tools/coolify-compose.sh | diff -q - compose.coolify.yml > /dev/null"
 check "compose.coolify.yml has no variable in a volume source (Coolify refuses it)" \
-    sh -c '! awk "/source:/ && index(\\$0, \"\\${\")" compose.coolify.yml | grep -q .'
+    sh -c "! grep 'source:' compose.coolify.yml | grep -qF '\${'"
 
 echo "== build"
 docker compose build > "$WORK/build.log" 2>&1 || { tail -30 "$WORK/build.log"; echo "build failed"; exit 1; }
