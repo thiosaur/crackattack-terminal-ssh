@@ -1,0 +1,19 @@
+#!/bin/sh
+# Login shell and forced command of the `play` account: whatever the client asked for
+# (a shell, `ls`, sftp...), what runs is the game, with the limits set at start-up.
+#
+# It refuses a connection without a terminal (ssh -T, or a command given without -t), and
+# a connection beyond MAX_PLAYERS games at once. The count is a plain one: two connections
+# arriving in the same instant may both get in.
+if [ ! -t 0 ]; then
+    echo "Crack Attack! needs a terminal: connect with a plain ssh, no command and no -T." >&2
+    exit 1
+fi
+[ -r /run/play.env ] && . /run/play.env
+playing=$(pgrep -c -f '^/usr/local/bin/crackattack-terminal')
+if [ "$playing" -ge "${MAX_PLAYERS:-10}" ]; then
+    echo "The server is full (${MAX_PLAYERS:-10} players). Try again in a moment." >&2
+    exit 1
+fi
+exec /usr/local/bin/crackattack-terminal --replay \
+    --idle-timeout "${IDLE_TIMEOUT:-300}" --max-time "${MAX_TIME:-1800}"

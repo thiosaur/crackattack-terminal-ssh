@@ -1,0 +1,62 @@
+# docker compose up -d --build
+#     the keys already allowed on this host (~/.ssh/authorized_keys), on port 2222
+# AUTHORIZED_KEYS_FILE=/path/to/keys docker compose up -d --build
+#     another file of public keys (a path on the machine that runs docker)
+# AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d --build
+#     the keys you give, instead of the file
+# AUTH_MODE=open AUTHORIZED_KEYS_FILE=/dev/null docker compose up -d --build
+#     anyone who reaches the port, no password asked
+services:
+  crackattack:
+    build:
+      context: .
+      additional_contexts:
+        crackattack-src: ${CRACKATTACK_SRC:-.}
+      args:
+        BINARY_FROM: ${BINARY_FROM:-release}
+        CRACKATTACK_VERSION: ${CRACKATTACK_VERSION}
+        CRACKATTACK_ARCHIVE: ${CRACKATTACK_ARCHIVE:-linux-x86_64-static}
+        CRACKATTACK_SHA256: ${CRACKATTACK_SHA256:-}
+    image: ${IMAGE:-crackattack-terminal-ssh}:${CRACKATTACK_VERSION}
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-2222}:2222"
+    environment:
+      AUTH_MODE: ${AUTH_MODE:-keys}
+      AUTHORIZED_KEYS: ${AUTHORIZED_KEYS:-}
+      IDLE_TIMEOUT: ${IDLE_TIMEOUT:-300}
+      MAX_TIME: ${MAX_TIME:-1800}
+      MAX_PLAYERS: ${MAX_PLAYERS:-10}
+    volumes:
+      - host-keys:/keys
+      # The allowed public keys, read at each login. A missing file stops the start rather
+      # than being created empty: without keys, nothing is served.
+      - type: bind
+        source: ${AUTHORIZED_KEYS_FILE:-${HOME}/.ssh/authorized_keys}
+        target: /authorized_keys
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    # The log holds the players' addresses (sshd logs each connection): keep it short.
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    # Hardening: nothing is writable but tmpfs, only what sshd needs to switch to the
+    # `play` account is kept, and the number of games is capped by the limits below.
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /var/log
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE, FOWNER, KILL, AUDIT_WRITE]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 512m
+    cpus: 2
+
+volumes:
+  host-keys:

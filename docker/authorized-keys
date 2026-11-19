@@ -1,0 +1,9 @@
+#!/bin/sh
+# sshd runs this at each login (AuthorizedKeysCommand) to get the allowed public keys: the
+# ones given in AUTHORIZED_KEYS, or else the host's file mounted on /authorized_keys. Read
+# at each login, so a key removed from the host's file loses access without a restart.
+if [ -s /run/authorized_keys.src ]; then
+    cat /run/authorized_keys.src
+else
+    cat /authorized_keys
+fi

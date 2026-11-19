@@ -1,0 +1,38 @@
+# sshd for a single purpose: play Crack Attack! in the terminal. Nothing else is reachable.
+Port 2222
+HostKey /keys/ssh_host_ed25519_key
+PidFile none
+
+# One account, no shell: its login shell and the forced command are both `play`,
+# which ignores what the client asked for and starts the game.
+AllowUsers play
+PermitRootLogin no
+ForceCommand /usr/local/bin/play
+PermitTTY yes
+
+DisableForwarding yes
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+AllowAgentForwarding no
+X11Forwarding no
+GatewayPorts no
+PermitTunnel no
+PermitUserEnvironment no
+PermitUserRC no
+
+UsePAM no
+Banner /etc/ssh/banner
+PrintMotd no
+PrintLastLog no
+UseDNS no
+LogLevel INFO
+
+LoginGraceTime 20
+MaxAuthTries 3
+MaxSessions 1
+MaxStartups 10:30:60
+ClientAliveInterval 30
+ClientAliveCountMax 3
+
+# Authentication (open or keys) is written at start-up by entrypoint.sh.
+Include /run/sshd_auth.conf
