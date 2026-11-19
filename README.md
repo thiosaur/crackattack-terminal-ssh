@@ -8,6 +8,13 @@ and nothing else is reachable.
 ssh -p 2222 play@your-server
 ```
 
+<p align="center">
+  <img src="media/terminal.png" alt="The terminal version: a game in progress" width="520">
+</p>
+
+This is the companion of the [main repository](https://github.com/thiosaur/crackattack), which
+holds the game, its releases and the terminal version itself.
+
 The image is only packaging. The game itself is downloaded from a release of the main
 repository (one small executable) and checked against a pinned SHA-256 before it goes in.
 
