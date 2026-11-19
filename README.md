@@ -67,6 +67,17 @@ replaces the file instead of rewriting it leaves the container on the old one: r
 The ssh host key is kept in the `host-keys` volume, so the fingerprint survives a rebuild.
 It is printed in the container's log when it is created.
 
+## On Coolify
+
+Coolify refuses a variable in the source of a volume, which `compose.yml` has for the file of
+keys. `compose.coolify.yml` is the same file with the host's `/root/.ssh/authorized_keys` written
+out; `tools/coolify-compose.sh` makes it from `compose.yml`, and `test/smoke.sh` checks that they
+agree. Create the application from this repository with the *Docker Compose* build pack and
+`/compose.coolify.yml` as the file, and set the variables `CRACKATTACK_VERSION`,
+`CRACKATTACK_ARCHIVE` and `CRACKATTACK_SHA256` (the values of `.env`: Coolify does not read it).
+No domain is needed (Traefik routes HTTP, not ssh): give the machine a name in your DNS and open
+the port to the networks that should reach it.
+
 ## What the account can do
 
 - One account, `play`. Its login shell and the forced command are both a script that ignores what

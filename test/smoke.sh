@@ -65,6 +65,12 @@ put_keys() {
     inbox sh -c 'cat > /tmp/bad && chmod 600 /tmp/bad' < "$WORK/bad"
 }
 
+echo "== files"
+check "compose.coolify.yml is what tools/coolify-compose.sh makes from compose.yml" \
+    sh -c "tools/coolify-compose.sh | diff -q - compose.coolify.yml > /dev/null"
+check "compose.coolify.yml has no variable in a volume source (Coolify refuses it)" \
+    sh -c "! grep -A3 'type: bind' compose.coolify.yml | grep -q 'source:.*\\\$\\{'"
+
 echo "== build"
 docker compose build > "$WORK/build.log" 2>&1 || { tail -30 "$WORK/build.log"; echo "build failed"; exit 1; }
 IMG=$(docker compose config --images | head -1)
