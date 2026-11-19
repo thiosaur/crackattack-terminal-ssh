@@ -1,0 +1,52 @@
+#!/bin/sh
+# The `import-keys` container: runs once before the server and stops. It copies the public keys
+# of the files named by IMPORT_KEYS_FILE and IMPORT_KEYS_FILE_2 (mounted on /import/1 and
+# /import/2) into the players' directory, as import-1.pub and import-2.pub, ONCE: when it is
+# done it writes the marker .already-imported, and the next starts do nothing.
+set -u
+
+DIR=/players
+MARKER=$DIR/.already-imported
+
+if [ -e "$MARKER" ]; then
+    echo "import-keys: already done, nothing to do (delete $MARKER in the players' directory to import again)"
+    exit 0
+fi
+
+summary=
+total=0
+for n in 1 2; do
+    src=/import/$n
+    eval "label=\${IMPORT_KEYS_FILE$([ "$n" = 2 ] && echo _2):-}"
+    [ -s "$src" ] || continue
+    keys=$(ssh-keygen -l -f "$src" 2> /dev/null)
+    count=$(printf '%s\n' "$keys" | grep -c .)
+    if [ "$count" -eq 0 ]; then
+        echo "import-keys: $label holds no public key, skipped"
+        continue
+    fi
+    cat "$src" > "$DIR/import-$n.pub" && chmod 644 "$DIR/import-$n.pub" || { echo "import-keys: cannot write $DIR/import-$n.pub" >&2; exit 1; }
+    echo "import-keys: import-$n.pub <- $label: $count key(s)"
+    printf '%s\n' "$keys" | sed 's/^/import-keys:   /'
+    summary="$summary  import-$n.pub <- $label ($count key(s))
+"
+    total=$((total + count))
+done
+
+if [ "$total" -eq 0 ]; then
+    echo "import-keys: nothing to import (IMPORT_KEYS_FILE and IMPORT_KEYS_FILE_2 are not set, or hold no key)"
+    exit 0
+fi
+
+cat > "$MARKER" <<EOM
+This file records that the keys were imported ONCE, at the first start, on $(date -u +%Y-%m-%dT%H:%M:%SZ), from:
+$summary
+The import never runs again as long as this file exists.
+
+If you DELETE this file, the import runs again at the next start: import-1.pub and import-2.pub
+are overwritten with the CURRENT content of the source files listed above. A key you deleted from
+them here comes back if it is still in its source file, and a key you added to them by hand is lost.
+Delete this file only if that is what you want. (Other files of this directory are never touched.)
+EOM
+chmod 644 "$MARKER"
+echo "import-keys: done, $total key(s) imported; $MARKER written"

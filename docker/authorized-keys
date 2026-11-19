@@ -1,9 +1,20 @@
 #!/bin/sh
 # sshd runs this at each login (AuthorizedKeysCommand) to get the allowed public keys: the
-# ones given in AUTHORIZED_KEYS, or else the host's file mounted on /authorized_keys. Read
-# at each login, so a key removed from the host's file loses access without a restart.
+# ones given in AUTHORIZED_KEYS, or else every file of the players' directory (/players, a
+# read-only mount; files whose name starts with a dot are not keys). Read at each login: a key
+# added to a file or removed from it counts at once, without a restart.
+#
+# Each key is served with `restrict,pty`: no forwarding, no agent, no X11, no user rc, only a
+# terminal. sshd_config already says so; this is the second lock. A key that has options of
+# its own (from="...") keeps them.
 if [ -s /run/authorized_keys.src ]; then
     cat /run/authorized_keys.src
 else
-    cat /authorized_keys
-fi
+    for file in /players/*; do
+        [ -f "$file" ] && { cat "$file"; echo; }
+    done
+fi | awk '
+    /^[ \t]*(#|$)/ { next }
+    $1 ~ /^(ssh-|ecdsa-|sk-)/ { print "restrict,pty " $0; next }
+    { print "restrict,pty," $0 }
+'

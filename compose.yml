@@ -1,11 +1,17 @@
 # docker compose up -d --build
-#     the keys already allowed on this host (~/.ssh/authorized_keys), on port 2222
-# AUTHORIZED_KEYS_FILE=/path/to/keys docker compose up -d --build
-#     another file of public keys (a path on the machine that runs docker)
+#     the keys are the files of ./keys (any file there, one public key per line); with none, the
+#     container starts and nobody can play. KEYS_DIR=/path/to/keys to use another directory (a
+#     path on the machine that runs docker)
+# IMPORT_KEYS_FILE=$HOME/.ssh/authorized_keys docker compose up -d --build
+#     copies that file into the directory once, at the first start (see README, "Import")
 # AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d --build
-#     the keys you give, instead of the file
-# AUTH_MODE=open AUTHORIZED_KEYS_FILE=/dev/null docker compose up -d --build
+#     the keys you give, instead of the directory
+# AUTH_MODE=open docker compose up -d --build
 #     anyone who reaches the port, no password asked
+#
+# Lines marked `#--local-only` are left out of compose.coolify.yml and lines marked
+# `#--coolify:` are put in, by tools/coolify-compose.sh (Coolify refuses a variable in the source
+# of a volume and has no use of the import).
 services:
   crackattack:
     build:
@@ -26,16 +32,22 @@ services:
       IDLE_TIMEOUT: ${IDLE_TIMEOUT:-300}
       MAX_TIME: ${MAX_TIME:-1800}
       MAX_PLAYERS: ${MAX_PLAYERS:-10}
+      COMPACT: ${COMPACT:-0}
     volumes:
       - host-keys:/keys
-      # The allowed public keys, read at each login. A missing file stops the start rather
-      # than being created empty: without keys, nothing is served.
+      # The players' keys, read at each login: a key added or removed counts at once. Read-only.
+      #--local-only
       - type: bind
-        source: ${AUTHORIZED_KEYS_FILE:-${HOME}/.ssh/authorized_keys}
-        target: /authorized_keys
+        source: ${KEYS_DIR:-./keys}
+        target: /players
         read_only: true
-        bind:
-          create_host_path: false
+      #--end-local-only
+      #--coolify: - players:/players:ro
+    #--local-only
+    depends_on:
+      import-keys:
+        condition: service_completed_successfully
+    #--end-local-only
     restart: unless-stopped
     # The log holds the players' addresses (sshd logs each connection): keep it short.
     logging:
@@ -43,20 +55,67 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-    # Hardening: nothing is writable but tmpfs, only what sshd needs to switch to the
-    # `play` account is kept, and the number of games is capped by the limits below.
+    # Hardening: nothing is writable but tmpfs, and the number of games is capped by the
+    # limits below.
     read_only: true
     tmpfs:
-      - /run
+      - /run:mode=755,uid=10222,gid=10222
       - /tmp
-      - /var/log
+    # sshd runs as `play` (uid 10222): no capability at all.
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE, FOWNER, KILL, AUDIT_WRITE]
     security_opt:
       - no-new-privileges:true
-    pids_limit: 512
+    pids_limit: ${PIDS_LIMIT:-128}
     mem_limit: 512m
     cpus: 2
 
+#--local-only
+  # Runs once before the server and stops: copies the files named by IMPORT_KEYS_FILE and
+  # IMPORT_KEYS_FILE_2 (say, ~/.ssh/authorized_keys of an account) into the players' directory,
+  # at the first start only (docker/import-keys). It is the only container that sees those
+  # files, it has no network, and the server never does. Without a setting it does nothing.
+  import-keys:
+    image: ${IMAGE:-crackattack-terminal-ssh}:${CRACKATTACK_VERSION}
+    user: root
+    entrypoint: ["/usr/local/bin/import-keys"]
+    environment:
+      IMPORT_KEYS_FILE: ${IMPORT_KEYS_FILE:-}
+      IMPORT_KEYS_FILE_2: ${IMPORT_KEYS_FILE_2:-}
+    network_mode: none
+    volumes:
+      - type: bind
+        source: ${KEYS_DIR:-./keys}
+        target: /players
+      - type: bind
+        source: ${IMPORT_KEYS_FILE:-/dev/null}
+        target: /import/1
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IMPORT_KEYS_FILE_2:-/dev/null}
+        target: /import/2
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    # Only to read files that belong to another account and to write into the directory.
+    cap_add: [DAC_OVERRIDE]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 16
+    mem_limit: 16m
+    healthcheck:
+      disable: true
+#--end-local-only
+
 volumes:
   host-keys:
+#--coolify:   players:
+#--coolify:     driver: local
+#--coolify:     driver_opts:
+#--coolify:       type: none
+#--coolify:       o: bind
+#--coolify:       device: ${KEYS_DIR}

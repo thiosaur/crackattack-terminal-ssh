@@ -16,11 +16,11 @@ export COMPOSE_PROJECT_NAME="ca-ssh-smoke-$$"
 export IMAGE="ca-ssh-smoke-$$"
 export HOST_PORT=$((20000 + $$ % 20000))
 export IDLE_TIMEOUT=5 MAX_TIME=60
-unset AUTH_MODE AUTHORIZED_KEYS
-# A directory on the machine that runs docker (not necessarily this one), for the file of
-# keys that stands for the host's ~/.ssh/authorized_keys. Written and removed by containers.
+unset AUTH_MODE AUTHORIZED_KEYS IMPORT_KEYS_FILE IMPORT_KEYS_FILE_2
+# A directory on the machine that runs docker (not necessarily this one): the players' directory
+# (keys/) and the files to import from. Written and removed by containers.
 HOST_DIR="/tmp/ca-ssh-smoke-$$"
-export AUTHORIZED_KEYS_FILE="$HOST_DIR/authorized_keys"
+export KEYS_DIR="$HOST_DIR/keys"
 if [ $# -ge 1 ]; then
     export BINARY_FROM=source CRACKATTACK_SRC="$1"
 fi
@@ -28,7 +28,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ca-ssh-smoke.XXXXXX")
 IMG=
 cleanup() {
-    [ -n "$IMG" ] && docker run --rm -v /tmp:/host-tmp --entrypoint rm "$IMG" -rf "/host-tmp/ca-ssh-smoke-$$" > /dev/null 2>&1
+    [ -n "$IMG" ] && docker run --rm --user root -v /tmp:/host-tmp --entrypoint rm "$IMG" -rf "/host-tmp/ca-ssh-smoke-$$" > /dev/null 2>&1
     docker compose down --volumes --rmi all --remove-orphans > /dev/null 2>&1
     rm -rf "$WORK"
 }
@@ -52,8 +52,9 @@ absent_within() { # process $1 gone within $2 seconds
     i=0; while [ $i -lt "$2" ]; do inbox pgrep -f "^/usr/local/bin/$1" > /dev/null || return 0; sleep 1; i=$((i + 1)); done; return 1
 }
 
-# Writes stdin to the file of keys on the docker host, owned as a user's own file would be.
-host_keys() { docker run --rm -i -v "$HOST_DIR:/d" --entrypoint sh "$IMG" -c 'cat > /d/authorized_keys && chown 1000:1000 /d/authorized_keys && chmod 600 /d/authorized_keys'; }
+# On the docker host, in $HOST_DIR: host_put PATH writes stdin to it, host_rm PATH removes it.
+host_put() { docker run --rm -i --user root -v "$HOST_DIR:/d" --entrypoint sh "$IMG" -c 'mkdir -p "$(dirname "/d/$1")" && cat > "/d/$1" && chmod 644 "/d/$1"' _ "$1"; }
+host_rm() { docker run --rm --user root -v "$HOST_DIR:/d" --entrypoint rm "$IMG" -f "/d/$1"; }
 wait_sshd() {
     i=0; until inbox ssh-keyscan -T 2 -p 2222 127.0.0.1 2> /dev/null | grep -q ssh-ed25519; do
         i=$((i + 1)); [ $i -gt 20 ] && { docker compose logs --tail 30; echo "sshd did not start"; exit 1; }; sleep 1
@@ -74,13 +75,11 @@ check "compose.coolify.yml has no variable in a volume source (Coolify refuses i
 echo "== build"
 docker compose build > "$WORK/build.log" 2>&1 || { tail -30 "$WORK/build.log"; echo "build failed"; exit 1; }
 IMG=$(docker compose config --images | head -1)
-ssh-keygen -q -t ed25519 -N '' -f "$WORK/good" && ssh-keygen -q -t ed25519 -N '' -f "$WORK/bad"
+ssh-keygen -q -t ed25519 -N '' -f "$WORK/good" && # `bad` is an RSA key: the algorithms allowed by sshd_config must still let RSA keys in.
+ssh-keygen -q -t rsa -b 4096 -N '' -f "$WORK/bad"
 
-echo "== nothing set: only the keys of the host's file"
-OUT=$(AUTHORIZED_KEYS_FILE="$HOST_DIR/absent" docker compose up -d 2>&1)
-check "no file of keys: the container does not start" test -z "$(docker compose ps -q --status running)"
-host_keys < "$WORK/good.pub"
-docker compose up -d --force-recreate > /dev/null 2>&1
+echo "== nothing set: the directory of keys is empty, nobody can play"
+docker compose up -d > /dev/null 2>&1
 wait_sshd
 inbox crackattack-terminal --version
 put_keys
@@ -97,23 +96,89 @@ CID=$(docker compose ps -q crackattack)
 OUT=$(docker inspect --format '{{.HostConfig.LogConfig.Config}}' "$CID")
 check "the container log is bounded" has "max-size"
 for setting in "passwordauthentication no" "permitemptypasswords no" "kbdinteractiveauthentication no" \
-               "pubkeyauthentication yes" "authorizedkeyscommand /usr/local/bin/authorized-keys"; do
+               "pubkeyauthentication yes" "authorizedkeyscommand /usr/local/bin/authorized-keys" \
+               "authenticationmethods publickey" "compression no" "loglevel VERBOSE" \
+               "unusedconnectiontimeout 30" "hostkeyalgorithms ssh-ed25519"; do
     OUT=$CONF; check "sshd: $setting" has "^$setting\$"
 done
+no_sftp() { ! inbox test -e /usr/lib/openssh/sftp-server; }
+check "no sftp server in the image"                   no_sftp
+OUT=$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$CID")
+check "the number of processes is bounded (128)"      has "^128$"
 OUT=$(inbox sh -c "$SSH play@127.0.0.1 2>&1" < /dev/null)
 check "no key: refused"                               has "Permission denied"
-OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
-check "a key that is not in the file: refused"        has "Permission denied"
 OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
-check "a key of the file: the game runs"              has "Game stopped"
-host_keys < "$WORK/bad.pub"
-OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
-check "key removed from the file: refused, no restart" has "Permission denied"
+check "empty directory: a key is refused"             has "Permission denied"
+host_put keys/alice < "$WORK/good.pub"
 OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
-check "key added to the file: the game runs, no restart" has "Game stopped"
+check "a key that is in no file: refused"             has "Permission denied"
+OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
+check "a file added: its key plays at once, no restart" has "Game stopped"
+OUT=$(inbox /usr/local/bin/authorized-keys)
+check "every key is served with restrict,pty"         sh -c '[ -n "$1" ] && ! printf "%s\n" "$1" | grep -qv "^restrict,pty ssh-"' _ "$OUT"
+host_put keys/bob < "$WORK/bad.pub"
+OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
+check "a second file: its key plays too"              has "Game stopped"
+host_rm keys/alice
+OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
+check "a file removed: its key is refused at once"    has "Permission denied"
+OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
+check "...and the other file still works"             has "Game stopped"
+host_put keys/.hidden < "$WORK/good.pub"
+OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
+check "a file whose name starts with a dot is ignored" has "Permission denied"
+host_rm keys/.hidden
+check "the directory of keys is read-only for the server" sh -c "! docker compose exec -T crackattack touch /players/x 2> /dev/null"
+
+echo "== import at the first start (IMPORT_KEYS_FILE, IMPORT_KEYS_FILE_2)"
+host_put src1 < "$WORK/good.pub"
+host_put src2 < "$WORK/bad.pub"
+export KEYS_DIR="$HOST_DIR/keys2" IMPORT_KEYS_FILE="$HOST_DIR/src1" IMPORT_KEYS_FILE_2="$HOST_DIR/src2"
+docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+put_keys
+OUT=$(docker compose logs import-keys 2>&1)
+check "the import says what it copied"                has "import-1.pub <-.*1 key"
+check "...for the second file too"                    has "import-2.pub <-.*1 key"
+check "...with the fingerprints"                      has "SHA256:"
+OUT=$(inbox ls -A /players)
+check "import-1.pub is in the directory"              has "^import-1.pub$"
+check "import-2.pub is in the directory"              has "^import-2.pub$"
+check "the marker .already-imported is there"         has "^.already-imported$"
+OUT=$(inbox cat /players/.already-imported)
+check "the marker says what deleting it does"         has "If you DELETE this file, the import runs again"
+OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
+check "an imported key plays"                         has "Game stopped"
+OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
+check "the second imported key plays"                 has "Game stopped"
+host_rm keys2/import-1.pub
+docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+put_keys
+OUT=$(docker compose logs import-keys 2>&1)
+check "second start: no new import"                   has "already done"
+OUT=$(inbox ls -A /players)
+check "...a key removed from the directory stays removed" hasnt "^import-1.pub$"
+OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
+check "...and that key is refused"                    has "Permission denied"
+host_rm keys2/.already-imported
+docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+put_keys
+OUT=$(inbox ls -A /players)
+check "marker deleted: the keys are imported again"   has "^import-1.pub$"
+unset IMPORT_KEYS_FILE IMPORT_KEYS_FILE_2
+export KEYS_DIR="$HOST_DIR/keys3"
+docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+OUT=$(docker compose logs import-keys 2>&1)
+check "no setting: nothing is imported, and it says so" has "nothing to import"
+OUT=$(inbox ls -A /players)
+check "...and no marker is written"                   test -z "$OUT"
+export KEYS_DIR="$HOST_DIR/keys"
 
 echo "== open access (AUTH_MODE=open)"
-export AUTH_MODE=open AUTHORIZED_KEYS_FILE=/dev/null
+export AUTH_MODE=open
 docker compose up -d --force-recreate > /dev/null 2>&1
 wait_sshd
 OUT=$(play_after 2 play@127.0.0.1)
@@ -135,6 +200,13 @@ for setting in "allowusers play" "permitrootlogin no" "allowtcpforwarding no" "x
                "permitemptypasswords yes" "pubkeyauthentication no"; do
     OUT=$CONF; check "sshd: $setting" has "^$setting\$"
 done
+OUT=$(inbox sh -c 'ps -o user= -p 1; grep CapEff /proc/1/status')
+check "sshd runs as play, not root"                  has "^play"
+check "...with no capability at all"                 has "CapEff:.0000000000000000"
+IMP=$(docker compose ps -a -q import-keys)
+check "import-keys has no network"                   test "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$IMP")" = none
+OUT=$(docker inspect --format '{{.State.Status}}' "$IMP")
+check "...and it has stopped (one-shot)"             has "^exited$"
 check "the root file system is read-only"            sh -c "! docker compose exec -T crackattack touch /etc/x 2> /dev/null"
 check "no game process is left"                      absent_within crackattack-terminal 5
 
@@ -147,6 +219,8 @@ check "...within a few seconds of the timeout"       test $((t1 - t0)) -le 12
 docker compose exec -d -T crackattack sh -c "(sleep 600) | $SSH play@127.0.0.1 > /dev/null 2>&1"
 sleep 3
 check "a game is running for the connected player"   running crackattack-terminal
+OUT=$(inbox pgrep -af '^/usr/local/bin/crackattack-terminal')
+check "by default the game is not compact"           hasnt "--compact"
 inbox pkill -9 -x ssh
 check "a dropped connection ends the game"           absent_within crackattack-terminal 10
 
@@ -165,6 +239,18 @@ inbox pkill -9 -x ssh
 check "the games end with the connections"            absent_within crackattack-terminal 10
 OUT=$(play_after 2 play@127.0.0.1)
 check "a place is free again"                         has "Game stopped"
+
+echo "== compact (COMPACT=1)"
+COMPACT=1 IDLE_TIMEOUT=30 docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+docker compose exec -d -T crackattack sh -c "(sleep 600) | $SSH play@127.0.0.1 > /dev/null 2>&1"
+sleep 3
+OUT=$(inbox pgrep -af '^/usr/local/bin/crackattack-terminal')
+check "COMPACT=1 starts the game with --compact"     has -- "--compact"
+inbox pkill -9 -x ssh
+check "the game ends with the connection"            absent_within crackattack-terminal 10
+OUT=$(docker compose run --rm --no-deps -e COMPACT=2 crackattack 2>&1)
+check "a wrong COMPACT stops the start"              has "COMPACT must be 0 or 1"
 
 echo "== the keys given in AUTHORIZED_KEYS"
 unset AUTH_MODE

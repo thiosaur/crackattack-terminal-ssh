@@ -58,13 +58,17 @@ LABEL org.opencontainers.image.title="Crack Attack! terminal over ssh" \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-server \
-    && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
+    && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* /usr/lib/openssh/sftp-server
 
-COPY docker/play docker/authorized-keys /usr/local/bin/
-RUN useradd --system --no-create-home --home-dir /home/play --shell /usr/local/bin/play play \
+COPY docker/play docker/authorized-keys docker/import-keys /usr/local/bin/
+# sshd runs as `play` itself, not as root: it can only ever log in that one account, and the
+# container keeps no capability. `play` may read /etc/shadow (where its own empty password
+# is, for AUTH_MODE=open); nothing else is in it.
+RUN useradd --system --uid 10222 --no-create-home --home-dir /home/play --shell /usr/local/bin/play play \
     && passwd -d play \
+    && chgrp play /etc/shadow && chmod 640 /etc/shadow \
     && install -d -m 755 -o root -g root /home/play \
-    && install -d -m 700 /keys
+    && install -d -m 700 -o play -g play /keys
 
 COPY --from=binary /pkg/crackattack-terminal /usr/local/bin/crackattack-terminal
 # Licence, authors and third-party notices travel with the binary.
@@ -76,6 +80,7 @@ COPY docker/banner /etc/ssh/banner
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 VOLUME /keys
+USER play
 EXPOSE 2222
 HEALTHCHECK --interval=60s --timeout=10s --start-period=10s \
     CMD crackattack-terminal --headless --autoplay easy --frames 100 > /dev/null \

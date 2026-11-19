@@ -26,7 +26,7 @@ there is no limit per address, no queue, no banning. The only limit is a plain t
 games at once (10 by default), and the container's `pids_limit`, `mem_limit` and `cpus`, which
 only keep a mistake from taking the host down. Keep the port on your own network, or behind a VPN.
 
-That is why, with nothing configured, only the ssh keys already allowed on the host can play.
+That is why, with nothing configured, nobody can play: you say whose keys are allowed (below).
 
 ## Run it
 
@@ -34,21 +34,26 @@ That is why, with nothing configured, only the ssh keys already allowed on the h
 docker compose up -d --build
 ```
 
-With nothing else set, the image allows **the public keys of `~/.ssh/authorized_keys` on the
-machine that runs docker**: whoever may already log in to that host may play, with the same key,
-and nobody else. The file is mounted read-only and read at each login, so a key added to it or
-removed from it counts at once. If the file does not exist, the container does not start.
+The players' keys are **the files of a directory**, `./keys` by default (any file in it, one public
+key per line; a name that starts with a dot is not a key). The server reads the directory at each
+login, so a file added, edited or removed counts at once, with no restart. A directory with no key
+starts the container all the same, and nobody can play until a key is in it.
 
 ```sh
-# another file of public keys (a path on the machine that runs docker)
-AUTHORIZED_KEYS_FILE=/srv/keys/players docker compose up -d --build
+mkdir -p keys && cat ~/.ssh/id_ed25519.pub > keys/me    # then: docker compose up -d --build
 
-# the keys you give, instead of a file (one per line)
+# another directory (a path on the machine that runs docker)
+KEYS_DIR=/srv/crackattack/keys docker compose up -d --build
+
+# the keys you give, instead of the directory (one per line)
 AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d --build
 
 # anyone who reaches the port, no password asked: only on a network you trust
-AUTH_MODE=open AUTHORIZED_KEYS_FILE=/dev/null docker compose up -d --build
+AUTH_MODE=open docker compose up -d --build
 ```
+
+Use a directory made for the game, rather than the `~/.ssh` of an account: what may log in to a
+machine and what may play are two different rights.
 
 Open access is never chosen for you: it takes `AUTH_MODE=open`, and the container says so in
 its log when it starts.
@@ -56,32 +61,67 @@ its log when it starts.
 | Variable | Default | Meaning |
 |---|---|---|
 | `AUTH_MODE` | `keys` | `keys`, or `open` to let anyone in |
-| `AUTHORIZED_KEYS_FILE` | `~/.ssh/authorized_keys` | file of allowed public keys, on the docker host |
-| `AUTHORIZED_KEYS` | | allowed public keys given directly; replaces the file |
+| `KEYS_DIR` | `./keys` | directory of the players' public keys, on the docker host |
+| `AUTHORIZED_KEYS` | | allowed public keys given directly; replaces the directory |
+| `IMPORT_KEYS_FILE`, `IMPORT_KEYS_FILE_2` | | files of public keys to copy into the directory, once (see Import) |
 | `IDLE_TIMEOUT` | `300` | seconds without a key press before the game stops |
 | `MAX_TIME` | `1800` | seconds of play per connection |
 | `MAX_PLAYERS` | `10` | games at once; a further connection is told the server is full |
+| `COMPACT` | `0` | `1`: the game draws the compact 80x24 screen (see `--compact`) |
 | `HOST_PORT` | `2222` | port published on the host |
 | `BIND_ADDRESS` | `0.0.0.0` | address the port is published on; give your LAN address to keep it off other networks |
 
 `IDLE_TIMEOUT`, `MAX_TIME` and `MAX_PLAYERS` must be positive whole numbers: anything else stops
 the container at start, with a message, rather than failing every connection later.
 
-With a remote docker engine (`docker context`), `~` is resolved on the machine where you type
-the command: give `AUTHORIZED_KEYS_FILE` the path as it is on the engine's machine. An editor that
-replaces the file instead of rewriting it leaves the container on the old one: restart it then.
+With a remote docker engine (`docker context`), `KEYS_DIR` and the import files are paths on the
+engine's machine, not on the one where you type the command.
+
+### Import
+
+To start from the keys of an account (say `~/.ssh/authorized_keys`), name the file once:
+
+```sh
+IMPORT_KEYS_FILE=$HOME/.ssh/authorized_keys docker compose up -d --build
+IMPORT_KEYS_FILE=/root/.ssh/authorized_keys IMPORT_KEYS_FILE_2=/home/me/.ssh/authorized_keys docker compose up -d --build
+```
+
+A small container with no network, run before the server and stopped after, copies each file into
+the directory (`import-1.pub`, `import-2.pub`) **at the first start only**, lists the keys it
+copied (with their fingerprints) in its log, and writes `.already-imported` in the directory. The
+next starts do nothing, even if the setting is still there. This is a **copy**, not a link: a key
+removed later from the source file keeps working until you remove it from the directory too.
+The marker says what deleting it does: the import then runs again at the next start, overwriting
+`import-1.pub` and `import-2.pub` with the current content of the source files. With no setting,
+nothing is imported and nobody can play until a key is in the directory.
+
+**Docker and your firewall.** A port published by Docker goes around `ufw` and most host firewalls:
+with `BIND_ADDRESS` at its default `0.0.0.0`, the port is open to every network the machine is on,
+whatever `ufw status` says. Set `BIND_ADDRESS` to the address of the network that should reach it
+(your LAN or VPN address), or filter in the `DOCKER-USER` chain.
+
+**Keep it up to date.** Nothing rebuilds the image by itself: a flaw of OpenSSH fixed by Debian
+stays in the container until you rebuild it. From time to time (and when Debian announces an
+OpenSSH security fix):
+
+```sh
+docker compose build --pull && docker compose up -d
+```
 
 The ssh host key is kept in the `host-keys` volume, so the fingerprint survives a rebuild.
 It is printed in the container's log when it is created.
 
 ## On Coolify
 
-Coolify refuses a variable in the source of a volume, which `compose.yml` has for the file of
-keys. `compose.coolify.yml` is the same file with the host's `/root/.ssh/authorized_keys` written
-out; `tools/coolify-compose.sh` makes it from `compose.yml`, and `test/smoke.sh` checks that they
+Coolify refuses a variable in the source of a volume, which `compose.yml` has for the directory
+of keys. `compose.coolify.yml` is the same file with the directory declared as a named volume
+bound to `KEYS_DIR` (a variable in `device:`), and without the import;
+`tools/coolify-compose.sh` makes it from `compose.yml`, and `test/smoke.sh` checks that they
 agree. Create the application from this repository with the *Docker Compose* build pack and
-`/compose.coolify.yml` as the file, and set the variables `CRACKATTACK_VERSION`,
-`CRACKATTACK_ARCHIVE` and `CRACKATTACK_SHA256` (the values of `.env`: Coolify does not read it).
+`/compose.coolify.yml` as the file, create the directory on the server, and set the variables
+`KEYS_DIR` (its absolute path), `CRACKATTACK_VERSION`, `CRACKATTACK_ARCHIVE` and
+`CRACKATTACK_SHA256` (the values of `.env`: Coolify does not read it). Put the keys in the
+directory by hand (the import is for plain `docker compose`), or give them in `AUTHORIZED_KEYS`.
 No domain is needed (Traefik routes HTTP, not ssh): give the machine a name in your DNS and open
 the port to the networks that should reach it.
 
@@ -95,9 +135,15 @@ the port to the networks that should reach it.
 - A connection without a terminal (`ssh -T`, or a command given without `-t`) is refused with a
   message, and a connection beyond `MAX_PLAYERS` is told the server is full. The count is a plain
   one: two connections arriving in the same instant may both get in.
-- The container has a read-only root file system, no capability beyond what sshd needs to switch
-  to the `play` account, `no-new-privileges`, and limits on processes, memory and CPU
-  (`compose.yml`).
+- sshd runs as the `play` account itself, not as root: it can log in that one account and no
+  other. The container has a read-only root file system, **no capability at all**, a read-only
+  view of the directory of keys and never the host's `~/.ssh`,
+  `no-new-privileges`, and limits on processes, memory and CPU
+  (`compose.yml`; `PIDS_LIMIT` defaults to 128, about 10 players: raise it with `MAX_PLAYERS`).
+- sshd is cut down to what the game uses: modern algorithms only, no compression, public keys
+  only (in keys mode), no sftp server, each key served with `restrict,pty`, and an authenticated
+  connection that opens no game is closed after 30 seconds. `LogLevel VERBOSE` logs which key each
+  player used.
 - **Load.** Each connection runs a game at 50 images per second. Measured here with the clients
   inside the same container (so a slight overestimate): about 1.5 % of one CPU core, 5 MiB and
   5 processes per player, from 1 to 10 players (14 % of a core and 49 MiB for ten). Size
@@ -136,8 +182,8 @@ the container, so it works with a remote docker engine): the game starts and Q e
 asked by the client does not run, a connection without a terminal is refused, another account is
 refused, the effective sshd settings, the read-only file system, a static game, a bounded log, a
 wrong setting that stops the start, the idle limit, a dropped connection, the cap on players, and
-who gets in: with nothing set (the
-host's file of keys, a key added and a key removed without a restart, no file at all), with
+who gets in: with an empty directory of keys, a file added and removed without a restart, a hidden
+file ignored, the import (first start, no second import, the marker deleted, no setting), with
 `AUTHORIZED_KEYS`, and with `AUTH_MODE=open`. It removes everything it created.
 
 ## Licence
