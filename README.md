@@ -4,6 +4,12 @@ A Docker image that serves the terminal version of
 [Crack Attack!](https://github.com/thiosaur/crackattack) over ssh: connecting starts the game,
 and nothing else is reachable.
 
+This is the companion of the [main repository](https://github.com/thiosaur/crackattack), which
+holds the game, its releases and the terminal version itself.
+
+The image is only packaging. The game itself is downloaded from a release of the main
+repository (one small executable) and checked against a pinned SHA-256 before it goes in.
+
 ```
 ssh -p 2222 play@your-server
 ```
@@ -11,12 +17,16 @@ ssh -p 2222 play@your-server
 <p align="center">
   <img src="media/terminal.png" alt="The terminal version: a game in progress" width="520">
 </p>
+<p align="center">
+  <img src="media/terminal-duel.png" alt="A duel: the opponent's stack in the side panel" width="520">
+  <img src="media/terminal-players.png" alt="Choosing an opponent among the players on the server" width="520">
+</p>
 
-This is the companion of the [main repository](https://github.com/thiosaur/crackattack), which
-holds the game, its releases and the terminal version itself.
+## What you can play
 
-The image is only packaging. The game itself is downloaded from a release of the main
-repository (one small executable) and checked against a pinned SHA-256 before it goes in.
+- **Solo.**
+- **Vs computer**, at three levels: easy, medium or hard.
+- **Vs player**: a duel against another player connected to the same server.
 
 ## A personal server, not a public service
 
@@ -24,9 +34,17 @@ This image is meant for your own machine: a homelab, a home server, a few people
 **It is not designed to be offered to the public.** Nothing in it deals with load or abuse:
 there is no limit per address, no queue, no banning. The only limit is a plain total, `MAX_PLAYERS`
 games at once (10 by default), and the container's `pids_limit`, `mem_limit` and `cpus`, which
-only keep a mistake from taking the host down. Keep the port on your own network, or behind a VPN.
+only keep a mistake from taking the host down. Keep the port on your own network, or behind a VPN;
+for a friend who comes from outside, use an invitation (see Invitations) rather than opening the
+server to everyone.
 
-That is why, with nothing configured, nobody can play: you say whose keys are allowed (below).
+For the same reason, with nothing configured, nobody can play: you say whose keys are allowed (below).
+
+## Requirements
+
+Docker with Compose, on an x86_64 machine: the game that goes in the image is the x86_64 build. On
+ARM (a Raspberry Pi, for instance) the image builds but the game does not start. The player's
+terminal must be at least 80x24.
 
 ## Run it
 
@@ -53,11 +71,13 @@ AUTH_MODE=open docker compose up -d --build
 ```
 
 A key is one line in the OpenSSH format (`ssh-ed25519 AAAA... comment`), as in `~/.ssh/id_ed25519.pub`.
-A public key file that starts with `---- BEGIN SSH2 PUBLIC KEY ----` (some tools write that) is
-not read by sshd: convert it with `ssh-keygen -i -m RFC4716 -f key.pub > keys/me`.
 
 Use a directory made for the game, rather than the `~/.ssh` of an account: what may log in to a
 machine and what may play are two different rights.
+
+To let someone else play, put their public key in another file of the directory. A key file that
+starts with `---- BEGIN SSH2 PUBLIC KEY ----` is not read by sshd: convert it with
+`ssh-keygen -i -m RFC4716 -f key.pub > keys/name`.
 
 Open access is never chosen for you: it takes `AUTH_MODE=open`, and the container says so in
 its log when it starts.
@@ -71,44 +91,36 @@ its log when it starts.
 | `IDLE_TIMEOUT` | `300` | seconds without a key press before the game stops |
 | `MAX_TIME` | `1800` | seconds of play per connection |
 | `MAX_PLAYERS` | `10` | games at once; a further connection is told the server is full |
-| `COMPACT` | `0` | `1`: the game draws the compact 80x24 screen (see `--compact`) |
+| `COMPACT` | `0` | `1`: the game draws the compact 80x24 screen (it is chosen by itself when the terminal is short) |
 | `INVITES` | `0` | `1`: a player with a key is shown a command to give a friend (see Invitations) |
 | `INVITE_HOST` | | the name of this server as your friends reach it, written in that command |
 | `INVITE_PORT` | `2222` | the port of this server as your friends reach it (`HOST_PORT` unless something redirects it), written in that command |
-| `PIDS_LIMIT` | `128` | processes the container may run (about 5 per player, plus a dozen) |
+| `PIDS_LIMIT` | `128` | processes the container may run (about 5 per player; raise it with `MAX_PLAYERS`) |
 | `HOST_PORT` | `2222` | port published on the host |
 | `BIND_ADDRESS` | `0.0.0.0` | address the port is published on; give your LAN address to keep it off other networks |
 
-`IDLE_TIMEOUT`, `MAX_TIME` and `MAX_PLAYERS` must be positive whole numbers, and `COMPACT` 0 or 1:
-anything else stops the container at start, with a message, rather than failing every connection
-later.
+A wrong value stops the container at start, with a message.
 
 With a remote docker engine (`docker context`), `KEYS_DIR` and the import files are paths on the
 engine's machine, not on the one where you type the command.
 
 ### Invitations
 
-With `INVITES=1`, a player who logs in with a key is shown, on the page of the players ("Vs
-player"), a command to give to a friend, such as `ssh -p 2222 invite-k3x9q0zv7a@game.example.org`.
-The friend types it and plays, with no key and no password, under a pseudo like everybody.
+With `INVITES=1`, a player who logs in with a key is shown, on the Vs player page, a command to give to a friend, such as `ssh -p 2222 invite-k3x9q0zv7a@game.example.org`.
+The friend types it and plays, with no key and no password, under a nickname like everybody.
 
 **Give the name of the server:** the container does not know the name or the port under which you
 are reached, so set `INVITE_HOST` (and `INVITE_PORT` if the published port is not 2222). Without
 `INVITE_HOST` the command ends with `@<server>`, and the container says so when it starts.
 
-- An invitation is an account `invite-` followed by ten random letters and digits: the name is the
-  secret. It lasts 24 hours and renews itself: at each login of a player with a key, the expired
-  ones are dropped, and a new one is made when there is none or the newest has less than 12 hours
-  left. Two are active at most, so the command shown is always valid for a good while.
-- Only players with a key see the command. An invited player does not: otherwise they could take the
-  next one at each visit and keep the access for good.
-- An invitation opens the game and nothing else (the same forced command as `play`, no forwarding,
-  no shell), and counts in `MAX_PLAYERS`. One that has expired is refused with a message.
-- The invitations live in memory: restarting the container cancels the ones in progress.
-- Without `INVITES=1` nothing changes: no account but `play` may log in, and the game shows nothing
-  about invitations. The invitation is a secret of a few characters that ends up in the server's log
-  and the friend's terminal history: it is enough for something that only opens a game, and
-  that expires.
+- An invitation lasts 24 hours and renews itself: the command shown stays valid for at least 12
+  hours.
+- Only players with a key see the command, not invited players.
+- It opens the game and nothing else, and counts in `MAX_PLAYERS`.
+- Invitations live in memory: restarting the container cancels the ones in progress.
+- The invitation is a secret that ends up in the server's log and the friend's terminal history:
+  that is acceptable for something that only opens a game and expires.
+- Without `INVITES=1`, no account but `play` can log in.
 
 ### Import
 
@@ -119,14 +131,10 @@ IMPORT_KEYS_FILE=$HOME/.ssh/authorized_keys docker compose up -d --build
 IMPORT_KEYS_FILE=/root/.ssh/authorized_keys IMPORT_KEYS_FILE_2=/home/me/.ssh/authorized_keys docker compose up -d --build
 ```
 
-A small container with no network, run before the server and stopped after, copies each file into
-the directory (`import-1.pub`, `import-2.pub`) **at the first start only**, lists the keys it
-copied (with their fingerprints) in its log, and writes `.already-imported` in the directory. The
-next starts do nothing, even if the setting is still there. This is a **copy**, not a link: a key
-removed later from the source file keeps working until you remove it from the directory too.
-The marker says what deleting it does: the import then runs again at the next start, overwriting
-`import-1.pub` and `import-2.pub` with the current content of the source files. With no setting,
-nothing is imported and nobody can play until a key is in the directory.
+- It runs once, at the first start only: later starts do nothing, even if the setting is still there.
+- It is a copy, not a link: a key removed later from the source file keeps working until you remove
+  it from the directory too.
+- To import again, delete the `.already-imported` file in the directory.
 
 ## Before you expose it
 
@@ -143,45 +151,34 @@ OpenSSH security fix):
 docker compose build --pull && docker compose up -d
 ```
 
-The ssh host key is kept in the `host-keys` volume, so the fingerprint survives a rebuild.
-It is printed in the container's log when it is created. sshd runs as the `play` account (uid
-10222), so that volume must belong to it: a volume made by an earlier version, when sshd ran as
-root, needs `chown -R 10222:10222` on its content (or be deleted, which changes the fingerprint).
+The ssh host key is kept in the `host-keys` volume, so the fingerprint survives a rebuild. It is
+printed in the container's log when it is created.
 
 ## On Coolify
 
 `compose.coolify.yml` is the variant for Coolify; its header says how to set it up.
 
-## What the account can do
+## Security
 
-- One account, `play`. Its login shell and the forced command are both a script that ignores what
-  the client asked for (`ssh play@host ls`, `sftp`...) and starts the game.
-- No forwarding of any kind (tcp, unix sockets, agent, X11, tunnels), no root login.
-- After a lost game the menu comes back; Q leaves. The games of the container see each other
-  (`--lobby`, a folder in memory) and can play a duel against each other from the menu. A player who stops pressing keys, or
-  who plays too long, is disconnected. A dropped connection ends the game.
-- A connection without a terminal (`ssh -T`, or a command given without `-t`) is refused with a
-  message, and a connection beyond `MAX_PLAYERS` is told the server is full. The count is a plain
-  one: two connections arriving in the same instant may both get in.
-- sshd runs as the `play` account itself, not as root: it can log in that one account and no
-  other. The container has a read-only root file system, **no capability at all**, a read-only
-  view of the directory of keys and never the host's `~/.ssh`,
-  `no-new-privileges`, and limits on processes, memory and CPU
-  (`compose.yml`; `PIDS_LIMIT` defaults to 128, about 10 players: raise it with `MAX_PLAYERS`).
-- sshd is cut down to what the game uses: modern algorithms only, no compression, public keys
-  only (in keys mode), no sftp server, each key served with `restrict,pty`, and an authenticated
-  connection that opens no game is closed after 30 seconds. `LogLevel VERBOSE` logs which key each
-  player used.
-- **Load.** Each connection runs a game at 50 images per second. Measured here with the clients
-  inside the same container (so a slight overestimate): about 1.5 % of one CPU core, 5 MiB and
-  5 processes per player, from 1 to 10 players (14 % of a core and 49 MiB for ten). Size
-  `pids_limit`, `mem_limit`, `cpus` and `MAX_PLAYERS` for the number of players you expect.
-- **Logs.** sshd logs each connection with the player's address. The container log is capped
-  (3 files of 10 MB) so that it cannot fill the disk, and it is lost with the container.
-- **Base and game.** The image is `debian:13-slim` (Debian 12 left regular security support in
-  July 2026). The game is the static build, which needs no system library: the image does not
-  depend on its base's libc.
-- The terminal version draws in 80x24 when the player's terminal is short (it chooses by itself).
+- One account for the players, `play`, plus the invitation accounts if you turn them on. Whatever
+  the client asks for (`ssh play@host ls`, `sftp`...), it only starts the game.
+- No forwarding of any kind, no shell, no root login. sshd runs as `play` itself, and each key is
+  restricted to a terminal.
+- The container has a read-only root file system, no capability at all, and only a read-only view
+  of the directory of keys, never the host's `~/.ssh`.
+- sshd is cut down to what the game uses: modern algorithms only, public keys only (in keys mode),
+  no sftp. A connection that opens no game is closed after 30 seconds.
+- A connection without a terminal is refused. Beyond `MAX_PLAYERS`, the server says it is full.
+- A player who stops pressing keys, or plays too long, is disconnected; a dropped connection ends
+  the game.
+- sshd logs each connection with the player's address and which key was used. The container log is
+  capped (3 files of 10 MB) and is lost with the container.
+
+## Sizing
+
+Each connection runs a game at 50 frames per second: about 1.5 % of one CPU core, 5 MiB and 5
+processes per player (14 % of a core and 49 MiB for ten players). Size `PIDS_LIMIT`, `mem_limit`,
+`cpus` and `MAX_PLAYERS` for the number of players you expect.
 
 ## Which release
 
@@ -194,9 +191,7 @@ tools/bump.sh 2.0.0-beta.7 linux-x86_64          # the ordinary build instead (n
 docker compose up -d --build
 ```
 
-The options this image relies on (`--lobby`, `--invite-command`, `--idle-timeout`, `--max-time`,
-`--max-frames`, the end of the game when the connection drops) and `SHA256SUMS` come with
-2.0.0-beta.7: pin that one or a later one. The image does not start the game with an older release.
+The image needs 2.0.0-beta.7 or later, and does not start the game with an older release.
 
 ## Test
 
@@ -205,14 +200,9 @@ test/smoke.sh                                  # the release pinned in .env
 test/smoke.sh /path/to/crackattack/checkout    # the game built from a checkout, to try a change
 ```
 
-It builds the image, starts it with the hardening of `compose.yml` and checks over ssh (from inside
-the container, so it works with a remote docker engine): the game starts and Q ends it, a command
-asked by the client does not run, a connection without a terminal is refused, another account is
-refused, the effective sshd settings, the read-only file system, a static game, a bounded log, a
-wrong setting that stops the start (`COMPACT` included), the compact screen, the idle limit, a dropped connection, the cap on players, and
-who gets in: with an empty directory of keys, a file added and removed without a restart, a hidden
-file ignored, the import (first start, no second import, the marker deleted, no setting), with
-`AUTHORIZED_KEYS`, and with `AUTH_MODE=open`. It removes everything it created.
+It builds the image, starts it with the hardening of `compose.yml` and checks, over ssh, that the
+game starts and stops, that nothing else can be run, that the settings are enforced, and who gets
+in. It removes everything it created.
 
 ## Licence
 
