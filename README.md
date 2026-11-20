@@ -52,6 +52,10 @@ AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d --build
 AUTH_MODE=open docker compose up -d --build
 ```
 
+A key is one line in the OpenSSH format (`ssh-ed25519 AAAA... comment`), as in `~/.ssh/id_ed25519.pub`.
+A public key file that starts with `---- BEGIN SSH2 PUBLIC KEY ----` (some tools write that) is
+not read by sshd: convert it with `ssh-keygen -i -m RFC4716 -f key.pub > keys/me`.
+
 Use a directory made for the game, rather than the `~/.ssh` of an account: what may log in to a
 machine and what may play are two different rights.
 
@@ -68,11 +72,13 @@ its log when it starts.
 | `MAX_TIME` | `1800` | seconds of play per connection |
 | `MAX_PLAYERS` | `10` | games at once; a further connection is told the server is full |
 | `COMPACT` | `0` | `1`: the game draws the compact 80x24 screen (see `--compact`) |
+| `PIDS_LIMIT` | `128` | processes the container may run (about 5 per player, plus a dozen) |
 | `HOST_PORT` | `2222` | port published on the host |
 | `BIND_ADDRESS` | `0.0.0.0` | address the port is published on; give your LAN address to keep it off other networks |
 
-`IDLE_TIMEOUT`, `MAX_TIME` and `MAX_PLAYERS` must be positive whole numbers: anything else stops
-the container at start, with a message, rather than failing every connection later.
+`IDLE_TIMEOUT`, `MAX_TIME` and `MAX_PLAYERS` must be positive whole numbers, and `COMPACT` 0 or 1:
+anything else stops the container at start, with a message, rather than failing every connection
+later.
 
 With a remote docker engine (`docker context`), `KEYS_DIR` and the import files are paths on the
 engine's machine, not on the one where you type the command.
@@ -95,6 +101,8 @@ The marker says what deleting it does: the import then runs again at the next st
 `import-1.pub` and `import-2.pub` with the current content of the source files. With no setting,
 nothing is imported and nobody can play until a key is in the directory.
 
+## Before you expose it
+
 **Docker and your firewall.** A port published by Docker goes around `ufw` and most host firewalls:
 with `BIND_ADDRESS` at its default `0.0.0.0`, the port is open to every network the machine is on,
 whatever `ufw status` says. Set `BIND_ADDRESS` to the address of the network that should reach it
@@ -109,7 +117,9 @@ docker compose build --pull && docker compose up -d
 ```
 
 The ssh host key is kept in the `host-keys` volume, so the fingerprint survives a rebuild.
-It is printed in the container's log when it is created.
+It is printed in the container's log when it is created. sshd runs as the `play` account (uid
+10222), so that volume must belong to it: a volume made by an earlier version, when sshd ran as
+root, needs `chown -R 10222:10222` on its content (or be deleted, which changes the fingerprint).
 
 ## On Coolify
 
@@ -181,7 +191,7 @@ It builds the image, starts it with the hardening of `compose.yml` and checks ov
 the container, so it works with a remote docker engine): the game starts and Q ends it, a command
 asked by the client does not run, a connection without a terminal is refused, another account is
 refused, the effective sshd settings, the read-only file system, a static game, a bounded log, a
-wrong setting that stops the start, the idle limit, a dropped connection, the cap on players, and
+wrong setting that stops the start (`COMPACT` included), the compact screen, the idle limit, a dropped connection, the cap on players, and
 who gets in: with an empty directory of keys, a file added and removed without a restart, a hidden
 file ignored, the import (first start, no second import, the marker deleted, no setting), with
 `AUTHORIZED_KEYS`, and with `AUTH_MODE=open`. It removes everything it created.
