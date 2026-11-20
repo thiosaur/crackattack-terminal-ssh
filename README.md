@@ -15,6 +15,9 @@ ssh -p 2222 play@your-server
 ```
 
 <p align="center">
+  <img src="media/solo.png" alt="A solo game" width="520">
+</p>
+<p align="center">
   <img src="media/menu.png" alt="The menu" width="420">
 </p>
 <p align="center">
