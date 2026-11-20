@@ -123,17 +123,7 @@ root, needs `chown -R 10222:10222` on its content (or be deleted, which changes 
 
 ## On Coolify
 
-Coolify refuses a variable in the source of a volume, which `compose.yml` has for the directory
-of keys. `compose.coolify.yml` is the same file with the directory declared as a named volume
-bound to `KEYS_DIR` (a variable in `device:`), and without the import;
-`tools/coolify-compose.sh` makes it from `compose.yml`, and `test/smoke.sh` checks that they
-agree. Create the application from this repository with the *Docker Compose* build pack and
-`/compose.coolify.yml` as the file, create the directory on the server, and set the variables
-`KEYS_DIR` (its absolute path), `CRACKATTACK_VERSION`, `CRACKATTACK_ARCHIVE` and
-`CRACKATTACK_SHA256` (the values of `.env`: Coolify does not read it). Put the keys in the
-directory by hand (the import is for plain `docker compose`), or give them in `AUTHORIZED_KEYS`.
-No domain is needed (Traefik routes HTTP, not ssh): give the machine a name in your DNS and open
-the port to the networks that should reach it.
+`compose.coolify.yml` is the variant for Coolify; its header says how to set it up.
 
 ## What the account can do
 
