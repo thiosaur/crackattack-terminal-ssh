@@ -72,6 +72,9 @@ its log when it starts.
 | `MAX_TIME` | `1800` | seconds of play per connection |
 | `MAX_PLAYERS` | `10` | games at once; a further connection is told the server is full |
 | `COMPACT` | `0` | `1`: the game draws the compact 80x24 screen (see `--compact`) |
+| `INVITES` | `0` | `1`: a player with a key is shown a command to give a friend (see Invitations) |
+| `INVITE_HOST` | | the name of this server as your friends reach it, written in that command |
+| `INVITE_PORT` | `2222` | the port of this server as your friends reach it (`HOST_PORT` unless something redirects it), written in that command |
 | `PIDS_LIMIT` | `128` | processes the container may run (about 5 per player, plus a dozen) |
 | `HOST_PORT` | `2222` | port published on the host |
 | `BIND_ADDRESS` | `0.0.0.0` | address the port is published on; give your LAN address to keep it off other networks |
@@ -82,6 +85,30 @@ later.
 
 With a remote docker engine (`docker context`), `KEYS_DIR` and the import files are paths on the
 engine's machine, not on the one where you type the command.
+
+### Invitations
+
+With `INVITES=1`, a player who logs in with a key is shown, on the page of the players ("Vs
+player"), a command to give to a friend, such as `ssh -p 2222 invite-k3x9q0zv7a@game.example.org`.
+The friend types it and plays, with no key and no password, under a pseudo like everybody.
+
+**Give the name of the server:** the container does not know the name or the port under which you
+are reached, so set `INVITE_HOST` (and `INVITE_PORT` if the published port is not 2222). Without
+`INVITE_HOST` the command ends with `@<server>`, and the container says so when it starts.
+
+- An invitation is an account `invite-` followed by ten random letters and digits: the name is the
+  secret. It lasts 24 hours and renews itself: at each login of a player with a key, the expired
+  ones are dropped, and a new one is made when there is none or the newest has less than 12 hours
+  left. Two are active at most, so the command shown is always valid for a good while.
+- Only players with a key see the command. An invited player does not: otherwise they could take the
+  next one at each visit and keep the access for good.
+- An invitation opens the game and nothing else (the same forced command as `play`, no forwarding,
+  no shell), and counts in `MAX_PLAYERS`. One that has expired is refused with a message.
+- The invitations live in memory: restarting the container cancels the ones in progress.
+- Without `INVITES=1` nothing changes: no account but `play` may log in, and the game shows nothing
+  about invitations. The invitation is a secret of a few characters that ends up in the server's log
+  and the friend's terminal history: it is enough for something that only opens a game, and
+  that expires.
 
 ### Import
 
@@ -130,7 +157,8 @@ root, needs `chown -R 10222:10222` on its content (or be deleted, which changes 
 - One account, `play`. Its login shell and the forced command are both a script that ignores what
   the client asked for (`ssh play@host ls`, `sftp`...) and starts the game.
 - No forwarding of any kind (tcp, unix sockets, agent, X11, tunnels), no root login.
-- After a lost game a new one starts (`--replay`); Q leaves. A player who stops pressing keys, or
+- After a lost game the menu comes back; Q leaves. The games of the container see each other
+  (`--lobby`, a folder in memory) and can play a duel against each other from the menu. A player who stops pressing keys, or
   who plays too long, is disconnected. A dropped connection ends the game.
 - A connection without a terminal (`ssh -T`, or a command given without `-t`) is refused with a
   message, and a connection beyond `MAX_PLAYERS` is told the server is full. The count is a plain
@@ -161,14 +189,14 @@ root, needs `chown -R 10222:10222` on its content (or be deleted, which changes 
 To move to a new one:
 
 ```sh
-tools/bump.sh 2.0.0-beta.6                       # the static build; reads the checksum from SHA256SUMS
-tools/bump.sh 2.0.0-beta.6 linux-x86_64          # the ordinary build instead (needs glibc 2.34 or later)
+tools/bump.sh 2.0.0-beta.7                       # the static build; reads the checksum from SHA256SUMS
+tools/bump.sh 2.0.0-beta.7 linux-x86_64          # the ordinary build instead (needs glibc 2.34 or later)
 docker compose up -d --build
 ```
 
-The options this image relies on (`--replay`, `--idle-timeout`, `--max-time`, the end of the game
-when the connection drops) and `SHA256SUMS` come with the release after 2.0.0-beta.5: pin that one
-or a later one.
+The options this image relies on (`--lobby`, `--invite-command`, `--idle-timeout`, `--max-time`,
+`--max-frames`, the end of the game when the connection drops) and `SHA256SUMS` come with
+2.0.0-beta.7: pin that one or a later one. The image does not start the game with an older release.
 
 ## Test
 

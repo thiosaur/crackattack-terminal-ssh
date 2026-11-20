@@ -69,6 +69,12 @@ RUN useradd --system --uid 10222 --no-create-home --home-dir /home/play --shell 
     && chgrp play /etc/shadow && chmod 640 /etc/shadow \
     && install -d -m 755 -o root -g root /home/play \
     && install -d -m 700 -o play -g play /keys
+# The list of accounts is a link to a file in memory (/run/passwd, written at each start from
+# this copy): with INVITES=1 the invited players are accounts added to it while sshd runs, and
+# the root file system stays read-only.
+# The image keeps a copy there too, so that the link leads somewhere in a container that has no
+# tmpfs on /run (the one-shot import) and while docker looks the user up.
+RUN mv /etc/passwd /usr/share/passwd.base && cp /usr/share/passwd.base /run/passwd && ln -s /run/passwd /etc/passwd
 
 COPY --from=binary /pkg/crackattack-terminal /usr/local/bin/crackattack-terminal
 # Licence, authors and third-party notices travel with the binary.
@@ -83,6 +89,6 @@ VOLUME /keys
 USER play
 EXPOSE 2222
 HEALTHCHECK --interval=60s --timeout=10s --start-period=10s \
-    CMD crackattack-terminal --headless --autoplay easy --frames 100 > /dev/null \
+    CMD crackattack-terminal --headless --autoplay --autoplay-ai easy --max-frames 100 > /dev/null \
         && ssh-keyscan -T 3 -p 2222 127.0.0.1 2> /dev/null | grep -q ssh-ed25519
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

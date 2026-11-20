@@ -5,7 +5,6 @@ PidFile none
 
 # One account, no shell: its login shell and the forced command are both `play`,
 # which ignores what the client asked for and starts the game.
-AllowUsers play
 PermitRootLogin no
 ForceCommand /usr/local/bin/play
 PermitTTY yes
@@ -45,5 +44,9 @@ MaxStartups 10:30:60
 ClientAliveInterval 30
 ClientAliveCountMax 3
 
-# Authentication (open or keys) is written at start-up by entrypoint.sh.
+# Written at start-up by entrypoint.sh: who may log in (AllowUsers), how (open or keys), and,
+# with INVITES=1, how the invited players do. `Match` blocks come last: what follows one
+# applies only to it.
+Include /run/sshd_users.conf
 Include /run/sshd_auth.conf
+Include /run/sshd_invites.conf

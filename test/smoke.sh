@@ -113,17 +113,17 @@ host_put keys/alice < "$WORK/good.pub"
 OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
 check "a key that is in no file: refused"             has "Permission denied"
 OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
-check "a file added: its key plays at once, no restart" has "Game stopped"
+check "a file added: its key plays at once, no restart" has "Connection to 127.0.0.1 closed"
 OUT=$(inbox /usr/local/bin/authorized-keys)
 check "every key is served with restrict,pty"         sh -c '[ -n "$1" ] && ! printf "%s\n" "$1" | grep -qv "^restrict,pty ssh-"' _ "$OUT"
 host_put keys/bob < "$WORK/bad.pub"
 OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
-check "a second file: its key plays too"              has "Game stopped"
+check "a second file: its key plays too"              has "Connection to 127.0.0.1 closed"
 host_rm keys/alice
 OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
 check "a file removed: its key is refused at once"    has "Permission denied"
 OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
-check "...and the other file still works"             has "Game stopped"
+check "...and the other file still works"             has "Connection to 127.0.0.1 closed"
 host_put keys/.hidden < "$WORK/good.pub"
 OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
 check "a file whose name starts with a dot is ignored" has "Permission denied"
@@ -148,9 +148,9 @@ check "the marker .already-imported is there"         has "^.already-imported$"
 OUT=$(inbox cat /players/.already-imported)
 check "the marker says what deleting it does"         has "If you DELETE this file, the import runs again"
 OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
-check "an imported key plays"                         has "Game stopped"
+check "an imported key plays"                         has "Connection to 127.0.0.1 closed"
 OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
-check "the second imported key plays"                 has "Game stopped"
+check "the second imported key plays"                 has "Connection to 127.0.0.1 closed"
 host_rm keys2/import-1.pub
 docker compose up -d --force-recreate > /dev/null 2>&1
 wait_sshd
@@ -182,11 +182,11 @@ export AUTH_MODE=open
 docker compose up -d --force-recreate > /dev/null 2>&1
 wait_sshd
 OUT=$(play_after 2 play@127.0.0.1)
-check "login starts the game and Q ends the session" has "Game stopped"
+check "login starts the game and Q ends the session" has "Connection to 127.0.0.1 closed"
 check "the banner names the licence"                 has "GPL-3.0-or-later"
 OUT=$(play_after 2 play@127.0.0.1 id)
 check "a command asked by the client does not run"   hasnt "uid="
-check "the game runs instead"                         has "Game stopped"
+check "the game runs instead"                         has "Connection to 127.0.0.1 closed"
 OUT=$(inbox sh -c "$SSH_NO_TTY play@127.0.0.1 2>&1" < /dev/null)
 check "without a terminal: refused with a message"    has "needs a terminal"
 OUT=$(inbox sh -c "$SSH_NO_TTY play@127.0.0.1 ls 2>&1" < /dev/null)
@@ -238,7 +238,7 @@ check "...and no third game was started"              test "$(inbox pgrep -c -f 
 inbox pkill -9 -x ssh
 check "the games end with the connections"            absent_within crackattack-terminal 10
 OUT=$(play_after 2 play@127.0.0.1)
-check "a place is free again"                         has "Game stopped"
+check "a place is free again"                         has "Connection to 127.0.0.1 closed"
 
 echo "== compact (COMPACT=1)"
 COMPACT=1 IDLE_TIMEOUT=30 docker compose up -d --force-recreate > /dev/null 2>&1
@@ -262,7 +262,117 @@ check "no key: refused"                               has "Permission denied"
 OUT=$(play_after 2 -i /tmp/bad play@127.0.0.1)
 check "another key: refused"                          has "Permission denied"
 OUT=$(play_after 2 -i /tmp/good play@127.0.0.1)
-check "the listed key: the game runs"                 has "Game stopped"
+check "the listed key: the game runs"                 has "Connection to 127.0.0.1 closed"
+
+echo "== the games see each other (the lobby of the container)"
+unset AUTHORIZED_KEYS
+docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+put_keys
+OUT=$(inbox ls -d /run/lobby)
+check "the lobby folder exists in memory"             has "^/run/lobby$"
+docker compose exec -d -T crackattack sh -c "(sleep 600) | $SSH -i /tmp/bad play@127.0.0.1 > /dev/null 2>&1"
+sleep 3
+OUT=$(inbox pgrep -af '^/usr/local/bin/crackattack-terminal')
+check "the game is started with --lobby, and no --replay" sh -c 'printf "%s\n" "$1" | grep -q -- "--lobby /run/lobby" && ! printf "%s\n" "$1" | grep -q -- "--replay"' _ "$OUT"
+OUT=$(inbox ls /run/lobby)
+check "the game has its file in the lobby"            sh -c '[ -n "$1" ]' _ "$OUT"
+inbox pkill -9 -x ssh
+check "the game ends with the connection"            absent_within crackattack-terminal 10
+sleep 4
+OUT=$(inbox ls /run/lobby)
+check "the lobby is empty once the connections are closed" test -z "$OUT"
+
+echo "== no invitations by default"
+OUT=$(inbox sh -c "$SSH invite-abcdefghij@127.0.0.1 2>&1" < /dev/null)
+check "an invite account is refused"                  has "Permission denied"
+OUT=$(inbox sshd -T)
+check "sshd: only play may log in"                    has "^allowusers play$"
+OUT=$(inbox sh -c '(sleep 2; printf "\033[B\033[B\r"; sleep 1; printf "qq") | script -qec "stty rows 30 cols 100; '"$SSH"' -i /tmp/bad play@127.0.0.1" /dev/null 2>&1')
+check "the page of players tells nothing of invitations" hasnt "invite a friend"
+check "...and it greets the player"                   has "Welcome"
+
+echo "== invitations (INVITES=1)"
+OUT=$(docker compose run --rm --no-deps -e INVITES=2 crackattack 2>&1)
+check "a wrong INVITES stops the start"               has "INVITES must be 0 or 1"
+OUT=$(docker compose run --rm --no-deps -e INVITES=1 -e "INVITE_HOST=a b;c" crackattack 2>&1)
+check "a host with a space or a ; stops the start"    has "INVITE_HOST is a name"
+OUT=$(docker compose run --rm --no-deps -e INVITES=1 -e AUTH_MODE=open crackattack 2>&1)
+check "INVITES with AUTH_MODE=open stops the start"   has "INVITES=1 is for AUTH_MODE=keys"
+INVITES=1 INVITE_HOST=game.example.test INVITE_PORT=$HOST_PORT IDLE_TIMEOUT=20 docker compose up -d --force-recreate > /dev/null 2>&1
+wait_sshd
+put_keys
+OUT=$(inbox sshd -T)
+check "sshd: invite accounts may log in"              sh -c 'printf "%s\n" "$1" | grep -q "^allowusers play$" && printf "%s\n" "$1" | grep -q "^allowusers invite-\*$"' _ "$OUT"
+page() { # the page of players, seen by the player who logs in as $1 with the key $2
+    inbox sh -c '(sleep 2; printf "\033[B\033[B\r"; sleep 1; printf "qq") | script -qec "stty rows 30 cols 100; '"$SSH $2"' '"$1"'@127.0.0.1" /dev/null 2>&1'
+}
+OUT=$(page play "-i /tmp/bad")
+check "a player with a key is shown the command"      has "ssh -p $HOST_PORT invite-[a-z0-9]\{10\}@game.example.test"
+CODE1=$(printf '%s' "$OUT" | grep -o 'invite-[a-z0-9]\{10\}' | head -1)
+OUT=$(page play "-i /tmp/bad")
+check "the next login shows the same invitation"      has "$CODE1@game.example.test"
+OUT=$(inbox cat /run/invites)
+check "...and still only one is active"               test "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 1
+OUT=$(page "$CODE1" "")
+check "a friend gets in with the command, no key"     has "Welcome"
+check "...and is not shown the command"               hasnt "invite a friend"
+OUT=$(inbox sh -c "$SSH invite-zzzzzzzzzz@127.0.0.1 2>&1" < /dev/null)
+check "another invite name is refused"                has "Permission denied"
+OUT=$(inbox sh -c "$SSH root@127.0.0.1 2>&1" < /dev/null)
+check "another account is still refused"              has "Permission denied"
+# Rotation: under 12 hours left, a new invitation comes, and the old one still works.
+inbox sh -c "echo \"\$(cut -d' ' -f1 /run/invites) \$(( \$(date +%s) + 3600 ))\" > /run/invites"
+OUT=$(page play "-i /tmp/bad")
+CODE2=$(printf '%s' "$OUT" | grep -o 'invite-[a-z0-9]\{10\}' | head -1)
+check "under 12 hours left: a new invitation is shown" sh -c '[ -n "$1" ] && [ "$1" != "$2" ]' _ "$CODE2" "$CODE1"
+OUT=$(inbox cat /run/invites)
+check "...two are active"                             test "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 2
+OUT=$(page "$CODE1" "")
+check "...and the first one still lets a friend in"   has "Welcome"
+# Two at most: a third (both under 12 hours) drops the oldest.
+inbox sh -c "awk -v now=\$(date +%s) '{ print \$1, now + 3600 }' /run/invites > /run/invites.x && cat /run/invites.x > /run/invites"
+OUT=$(page play "-i /tmp/bad")
+OUT=$(inbox cat /run/invites)
+check "never more than two active"                    test "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 2
+# Expiry (of an invitation that is still on the list: the one before may have been dropped).
+CODE3=$(inbox sh -c "head -1 /run/invites | cut -d' ' -f1")
+inbox sh -c "awk -v now=\$(date +%s) '{ print \$1, now - 10 }' /run/invites > /run/invites.x && cat /run/invites.x > /run/invites"
+OUT=$(page "invite-$CODE3" "")
+check "an expired invitation is refused with a message" has "invitation has expired"
+check "...and no game was started for it"             absent_within crackattack-terminal 2
+OUT=$(inbox ls -l /etc/passwd)
+check "the list of accounts is the one in memory"     has "/run/passwd"
+check "the root file system is still read-only"       sh -c "! docker compose exec -T crackattack touch /etc/x 2> /dev/null"
+# The account `play` stays a key account: invitations do not open it.
+OUT=$(inbox sh -c "$SSH play@127.0.0.1 2>&1" < /dev/null)
+check "with invitations on, play without a key is still refused" has "Permission denied"
+OUT=$(inbox sh -c "ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o BatchMode=yes -p 2222 play@127.0.0.1 2>&1" < /dev/null)
+check "...and so is play with an empty password"       has "Permission denied"
+# Two logins at the same instant: both are shown a command.
+inbox sh -c 'rm -f /tmp/c1 /tmp/c2'
+for n in 1 2; do
+    docker compose exec -d -T crackattack sh -c '(sleep 2; printf "\033[B\033[B\r"; sleep 1; printf "qq") | script -qec "stty rows 30 cols 100; '"$SSH"' -i /tmp/bad play@127.0.0.1" /dev/null > /tmp/c'"$n"' 2>&1'
+done
+sleep 7
+OUT=$(inbox cat /tmp/c1 /tmp/c2)
+check "two simultaneous logins both get a complete command" test "$(printf '%s' "$OUT" | grep -ao 'invite-[a-z0-9]\{10\}@game.example.test' | wc -l | tr -d ' ')" = 2
+# A duel between two connections.
+duel_side() { # file, seconds before Enter picks the other (0: only waits)
+    docker compose exec -d -T crackattack sh -c '(sleep 1; printf "\033[B\033[B\r"; sleep '"$2"'; [ '"$2"' -gt 0 ] && printf "\r"; sleep 9) | script -qec "stty rows 30 cols 100; '"$SSH"' -i /tmp/bad play@127.0.0.1" /dev/null > '"$1"' 2>&1'
+}
+inbox sh -c 'rm -f /tmp/da /tmp/db'
+duel_side /tmp/da 0
+sleep 1
+duel_side /tmp/db 4
+sleep 12
+OUT=$(inbox cat /tmp/da)
+check "a duel between two connections: the first is asked to start" has "Enter: start"
+OUT=$(inbox cat /tmp/db)
+check "...and the second too"                         has "Enter: start"
+inbox pkill -9 -x ssh
+check "the games end with the connections"            absent_within crackattack-terminal 10
+unset INVITES INVITE_HOST INVITE_PORT
 
 echo
 if [ "$FAILED" -eq 0 ]; then echo "all checks passed"; else echo "$FAILED check(s) failed"; fi

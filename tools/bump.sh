@@ -2,7 +2,7 @@
 # Pins a Crack Attack! release in .env: version, archive and the checksum read from the
 # release's SHA256SUMS.
 #
-#   tools/bump.sh 2.0.0-beta.6 [linux-x86_64-static | linux-x86_64]
+#   tools/bump.sh 2.0.0-beta.7 [linux-x86_64-static | linux-x86_64]
 set -eu
 
 VERSION=${1:?usage: tools/bump.sh <version> [archive]}

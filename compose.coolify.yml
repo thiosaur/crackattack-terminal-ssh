@@ -30,6 +30,9 @@ services:
       MAX_TIME: ${MAX_TIME:-1800}
       MAX_PLAYERS: ${MAX_PLAYERS:-10}
       COMPACT: ${COMPACT:-0}
+      INVITES: ${INVITES:-0}
+      INVITE_HOST: ${INVITE_HOST:-}
+      INVITE_PORT: ${INVITE_PORT:-2222}
     volumes:
       - host-keys:/keys
       # The players' keys, read at each login: a key added or removed counts at once. Read-only.

@@ -10,6 +10,52 @@ if [ ! -t 0 ]; then
     exit 1
 fi
 [ -r /run/play.env ] && . /run/play.env
+
+# An invited player (invite-xxxxxxxxxx, no key): the invitation must still be active. It is
+# written in /run/invites by the login of a player who has a key (below), with its expiry.
+invite=
+case "${USER:-play}" in
+invite-*)
+    code=${USER#invite-}
+    if ! awk -v code="$code" -v now="$(date +%s)" '$1 == code && $2 > now { found = 1 } END { exit !found }' \
+            /run/invites 2> /dev/null; then
+        echo "This invitation has expired." >&2
+        exit 1
+    fi
+    ;;
+*)
+    # A player with a key sees the command to give a friend, and keeps it alive: at each login,
+    # under a lock, the expired invitations are dropped, and a new one of 24 hours is made when
+    # there is none or the newest has less than 12 hours left. Two active at most. Nothing runs
+    # in between: the passwd file of the sshd (a link to /run/passwd) is rewritten here.
+    if [ "${INVITES:-0}" = 1 ]; then
+        # The code is read under the same lock (a login at the same instant cannot make it empty).
+        code=$(
+        (
+            flock 9
+            now=$(date +%s)
+            [ -f /run/invites ] || : > /run/invites
+            awk -v now="$now" '$2 > now' /run/invites > /run/invites.new
+            newest=$(sort -k2 -n /run/invites.new | tail -1 | cut -d' ' -f2)
+            if [ -z "$newest" ] || [ $((newest - now)) -lt 43200 ]; then
+                echo "$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 10) $((now + 86400))" >> /run/invites.new
+            fi
+            sort -k2 -n /run/invites.new | tail -2 > /run/invites
+            rm -f /run/invites.new
+            cp /usr/share/passwd.base /run/passwd.new
+            while read -r code expiry; do
+                printf 'invite-%s::10222:10222::/home/play:/usr/local/bin/play\n' "$code" >> /run/passwd.new
+            done < /run/invites
+            mv /run/passwd.new /run/passwd
+            sort -k2 -n /run/invites | tail -1 | cut -d' ' -f1
+        ) 9> /run/invites.lock
+        )
+        port=" -p ${INVITE_PORT:-2222}"
+        [ "${INVITE_PORT:-2222}" = 22 ] && port=
+        invite="ssh$port invite-$code@${INVITE_HOST:-<server>}"
+    fi
+    ;;
+esac
 playing=$(pgrep -c -f '^/usr/local/bin/crackattack-terminal')
 if [ "$playing" -ge "${MAX_PLAYERS:-10}" ]; then
     echo "The server is full (${MAX_PLAYERS:-10} players). Try again in a moment." >&2
@@ -19,5 +65,10 @@ fi
 # Not "$@": this script is the login shell, sshd calls it with `-c command`.
 compact=
 [ "${COMPACT:-0}" = 1 ] && compact=--compact
-exec /usr/local/bin/crackattack-terminal --replay \
+# --lobby: the games of this container see each other (one locked file each, in memory).
+if [ -n "$invite" ]; then
+    exec /usr/local/bin/crackattack-terminal --lobby /run/lobby --invite-command "$invite" \
+        --idle-timeout "${IDLE_TIMEOUT:-300}" --max-time "${MAX_TIME:-1800}" $compact
+fi
+exec /usr/local/bin/crackattack-terminal --lobby /run/lobby \
     --idle-timeout "${IDLE_TIMEOUT:-300}" --max-time "${MAX_TIME:-1800}" $compact
