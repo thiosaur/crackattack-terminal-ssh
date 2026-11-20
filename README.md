@@ -17,19 +17,21 @@ ssh -p 2222 play@your-server
 <p align="center">
   <img src="media/solo.png" alt="A solo game" width="520">
 </p>
+
+## What you can play
+
 <p align="center">
   <img src="media/menu.png" alt="The menu" width="420">
 </p>
-<p align="center">
-  <img src="media/game.png" alt="A duel against the computer" width="420">
-  <img src="media/defeat.png" alt="The result of a lost round" width="420">
-</p>
-
-## What you can play
 
 - **Solo.**
 - **Vs computer**, at three levels: easy, medium or hard.
 - **Vs player**: a duel against another player connected to the same server.
+
+<p align="center">
+  <img src="media/game.png" alt="A duel against the computer: the opponent's stack on the right" width="420">
+  <img src="media/defeat.png" alt="The result of a lost round" width="420">
+</p>
 
 ## A personal server, not a public service
 
